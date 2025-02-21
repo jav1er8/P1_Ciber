@@ -8,12 +8,13 @@ import sqlite3
 import json
 import pdb
 from os import urandom
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 class User:
     def __init__(self, username, password, salt=None): 
         self.username = username
         self.salt = salt if salt else urandom(16)
-        self.password = self.crear_hash(password) if salt else password
+        self.password = self.crear_hash(password) if not salt else password
     
     @staticmethod
     def register(username, password): 
@@ -96,6 +97,19 @@ class Vault:
     def __init__(self, user):
         self.user = user
         self.contenedores = {}
+        self.nombre_fichero = f"{self.user.username}.dat"
+        self.clave = self._derive_key(user.password.encode())
+        self.cargar_datos()
+    
+    def _derive_key(self, password):
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=self.user.salt,
+            iterations=100000,
+            backend=default_backend()
+        )
+        return kdf.derive(password)
     
     def anadir_contenedor(self, nombre):
         if nombre in self.contenedores:
@@ -126,13 +140,16 @@ class Vault:
             return True
         return False
         
-    def encriptar_datos(self, datos, clave):
-        #Usaremos el AES como estudiamos en criptografía
+    def encriptar_datos(self, datos):
+        #Convertimos los datos a bytes si no lo están
+        if isinstance(datos, str):
+            datos = datos.encode('utf-8')
+        
         iv = urandom(16)
-        cifrado = Cipher(algorithms.AES(clave), modes.GCM(iv), backend=default_backend())
+        cifrado = Cipher(algorithms.AES(self.clave), modes.GCM(iv), backend=default_backend())
         cifrador = cifrado.encryptor()
         datos_cifrados = cifrador.update(datos) + cifrador.finalize()
-        return datos_cifrados + cifrador.tag + iv
+        return datos_cifrados, cifrador.tag, iv
     
     def desencriptar_datos(self, datos_cifrados, clave, tag, iv):
         iv = datos_cifrados[:16]
@@ -142,20 +159,47 @@ class Vault:
         descifrador = descifrado.decryptor()
         return descifrador.update(datos) + descifrador.finalize()
     
-    def guardar_datos(self, fichero, clave):
-        datos = json.dumps(self.contenedores)
-        encriptados = self.encriptar_datos(datos, clave)
-        with open(fichero, 'wb') as f:
-            f.write(encriptados)
+    def guardar_datos(self):
+        #Convertimos los contenedores a un formato serializable
+        datos_serializables = {}
+        for nombre, contenedor in self.contenedores.items():
+            datos_serializables[nombre] = {
+                'nombre': contenedor.nombre,
+                'secretos': contenedor.secretos
+            }
+        
+        datos_json = json.dumps(datos_serializables)
+        datos_cifrados, tag, iv = self.encriptar_datos(datos_json)
+        
+        #Guardamos todo en el archivo
+        with open(self.nombre_fichero, 'wb') as f:
+            f.write(iv + tag + datos_cifrados)
     
-    def cargar_datos(self, fichero, clave):
-        with open(fichero, 'rb') as f:
-            datos = f.read()
-        datos_desencriptados = self.desencriptar_datos(datos, clave)
-        contenedores = json.loads(datos_desencriptados.decode())
-        for nombre, secretos in contenedores.items():
-            self.contenedores[nombre] = Contenedor(nombre)
-            self.contenedores[nombre].secretos = secretos
+
+    def cargar_datos(self):
+        try:
+            with open(self.nombre_fichero, 'rb') as f:
+                datos = f.read()
+                if len(datos) < 32:  #IV(16) + TAG(16) mínimo
+                    return
+                
+                iv = datos[:16]
+                tag = datos[16:32]
+                datos_cifrados = datos[32:]
+                
+                datos_json = self.desencriptar_datos(datos_cifrados, tag, iv).decode()
+                datos_deserializados = json.loads(datos_json)
+                
+                #recreamos los contenedores
+                for nombre, datos_contenedor in datos_deserializados.items():
+                    contenedor = Contenedor(nombre)
+                    contenedor.secretos = datos_contenedor['secretos']
+                    self.contenedores[nombre] = contenedor
+                    
+        except (FileNotFoundError, json.JSONDecodeError):
+            #Si el archivo no existe o está corrupto, empezamos con un vault vacío
+            pass
+
         
     def obtener_secretos(self, nombre):
         if nombre in self.contenedores:
@@ -203,13 +247,21 @@ class SecureBox:
         return usuarios.get(username, None)
     
     def crear_contenedor(self, nombre):
-        if self.vault:
-            return self.vault.anadir_contenedor(nombre)
-        return False
+        if nombre in self.vault.contenedores:
+            print("Contenedor ya existente")
+            return False
+        
+        contenedor = Contenedor(nombre)
+        self.vault.contenedores[nombre] = contenedor
+        self.vault.guardar_datos()
+        return True
     
     def eliminar_contenedor(self, nombre):
-        if self.vault:
-            return self.vault.eliminar_contenedor(nombre)
+        if nombre in self.vault.contenedores:
+            del self.vault.contenedores[nombre]
+            #Guardamos después de eliminar para que se conserve
+            self.vault.guardar_datos()
+            return True
         return False
     
     def ver_contenedor(self):
@@ -223,14 +275,20 @@ class SecureBox:
         return None
     
     def anadir_secreto(self, nombre, secreto):
-        if self.vault:
-            return self.vault.anadir_secreto(nombre, secreto)
+        if nombre in self.vault.contenedores:
+            self.vault.contenedores[nombre].append(secreto)
+            self.vault.guardar_datos()
+            return True
         return False
     
     def eliminar_secreto(self, nombre, secreto):
-        if self.vault:
-            return self.vault.eliminar_secreto(nombre, secreto)
+        if nombre in self.vault.contenedores:
+            result = self.vault.contenedores[nombre].remove(secreto)
+            if result:
+                self.vault.guardar_datos()
+            return result
         return False
+
     
     def ver_secretos(self, nombre):
         if self.vault:
