@@ -12,10 +12,9 @@ from os import urandom
 class User:
     def __init__(self, username, password, salt=None): 
         self.username = username
-        self.salt = urandom(16)
-        self.password = self.crear_hash(password)
+        self.salt = salt if salt else urandom(16)
+        self.password = self.crear_hash(password) if salt else password
     
-
     @staticmethod
     def register(username, password): 
         user = User(username, password)
@@ -38,11 +37,13 @@ class User:
             json.dump(datos, f)
 
     def login(self, username, password):
-        if self.username == username and self.password==self.crear_hash(password):
+        user = User.get_user(username)
+        if user and user.verificar_contrasenia(password):
+            print("Has iniciado sesión correctamente!")
             return True
-
         return False
-    
+
+
     def crear_hash(self, text):
         contrasenia = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
@@ -54,8 +55,10 @@ class User:
         return urlsafe_b64encode(contrasenia.derive(text.encode())).decode()
 
     def verificar_contrasenia(self, contrasenia):
-        return self.password == self.crear_hash(contrasenia)
+        nuevo_hash = self.crear_hash(contrasenia)
+        return self.password == nuevo_hash
     
+
     @staticmethod
     def get_user(username):
         try:
@@ -63,11 +66,13 @@ class User:
                 datos = json.load(f)
                 for usuario in datos:
                     if usuario['username'] == username:
-                        return User(usuario['username'], usuario['password'], urlsafe_b64decode(usuario['salt'].encode()))
-        except FileNotFoundError:
+                        salt = urlsafe_b64decode(usuario['salt'].encode())
+                        user = User(usuario['username'], usuario['password'], salt)
+                        user.password = usuario['password']  
+                        return user
+        except (FileNotFoundError, json.JSONDecodeError):
             return None
         return None
-
 
 
 class Vault:
@@ -152,12 +157,16 @@ class SecureBox:
         self.users[username] = user
         return True
     
+    #Función que comprueba si un usuario ya está registrado, se usa en el login
+    def existe_usuario(self, username):
+        return username in self.users
+    
     def login(self, username, password):
-        if username in self.users:
-            return self.users[username].login(username, password)
-        else:
-            print("Usuario no registrado")
-            return False
+        user = User.get_user(username)
+        if user and user.verificar_contrasenia(password):
+            print("Has iniciado sesión correctamente!")
+            return True
+        return False
         
     def cargar_usuario(self, username):
         usuarios = {}
@@ -180,7 +189,7 @@ class Launcher:
         self.actualTries = 0
         
     def login_user(self, username, password): 
-        if (username == None or password == None):
+        if (username is None or password is None):
             print("Usuario o contraseña nulos")
 
         if self.actualTries == self.numMaxTries:
@@ -209,17 +218,14 @@ if __name__ == "__main__":
         print("3. Exit")
         print("Introduce el número de la opción deseada:")
         option = input()
-        #pdb.set_trace()
 
         if option == "1":
             print("Introduce tu nombre de usuario:")
             username = input()
             print("Introduce tu contraseña:")
             password = input()
-            launcher = Launcher(username, password)
-            if launcher.login_user(username, password):
+            if sb.login(username, password):
                 print("Has iniciado sesión correctamente!")
-
             else:
                 print("Usuario o contraseña incorrectos")
             break
@@ -229,8 +235,7 @@ if __name__ == "__main__":
             username = input()
             print("Introduce tu contraseña:")
             password = input()
-            launcher = Launcher(username, password)
-            if launcher.register_user(username, password):
+            if sb.registrar_usuario(username, password):
                 print("Usuario registrado correctamente!")
             else:
                 print("Error en el registro")
@@ -242,7 +247,6 @@ if __name__ == "__main__":
 
         else:
             print("Opción no válida, por favor, introduce un número del 1 al 3")
-
 
 
 
