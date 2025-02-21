@@ -75,6 +75,23 @@ class User:
         return None
 
 
+class Contenedor:
+    def __init__(self, nombre):
+        self.nombre = nombre
+        self.secretos = []
+    
+    def append(self, secreto):
+        self.secretos.append(secreto)
+    
+    def remove(self, secreto):
+        if secreto in self.secretos:
+            self.secretos.remove(secreto)
+            return True
+    
+    def __str__(self):
+        return f"Contendor: {self.nombre}, Secretos: {self.secretos}"
+
+
 class Vault:
     def __init__(self, user):
         self.user = user
@@ -108,12 +125,7 @@ class Vault:
             self.contenedores[nombre].remove(secreto)
             return True
         return False
-    
-    def obtener_secretos(self, nombre):
-        if nombre in self.contenedores:
-            return self.contenedores[nombre]
-        return None
-    
+        
     def encriptar_datos(self, datos, clave):
         #Usaremos el AES como estudiamos en criptografía
         iv = urandom(16)
@@ -140,13 +152,22 @@ class Vault:
         with open(fichero, 'rb') as f:
             datos = f.read()
         datos_desencriptados = self.desencriptar_datos(datos, clave)
-        self.contenedores = json.loads(datos_desencriptados.decode())
+        contenedores = json.loads(datos_desencriptados.decode())
+        for nombre, secretos in contenedores.items():
+            self.contenedores[nombre] = Contenedor(nombre)
+            self.contenedores[nombre].secretos = secretos
         
+    def obtener_secretos(self, nombre):
+        if nombre in self.contenedores:
+            return self.contenedores[nombre].secretos
+        return None
 
 
 class SecureBox:
     def __init__(self): 
         self.users = {}
+        self.usuario_actual = None
+        self.vault = None
     
     def registrar_usuario(self, username, password):
         if username in self.users:
@@ -164,6 +185,8 @@ class SecureBox:
     def login(self, username, password):
         user = User.get_user(username)
         if user and user.verificar_contrasenia(password):
+            self.usuario_actual = user
+            self.vault = Vault(user)
             print("Has iniciado sesión correctamente!")
             return True
         return False
@@ -178,6 +201,51 @@ class SecureBox:
         except FileNotFoundError:
             return None
         return usuarios.get(username, None)
+    
+    def crear_contenedor(self, nombre):
+        if self.vault:
+            return self.vault.anadir_contenedor(nombre)
+        return False
+    
+    def eliminar_contenedor(self, nombre):
+        if self.vault:
+            return self.vault.eliminar_contenedor(nombre)
+        return False
+    
+    def ver_contenedor(self):
+        if self.vault:
+            if not self.vault.contenedores:
+                print("No hay contenedores")
+                return
+            else:
+                for contenedor in self.vault.contenedores:
+                    print(contenedor)
+        return None
+    
+    def anadir_secreto(self, nombre, secreto):
+        if self.vault:
+            return self.vault.anadir_secreto(nombre, secreto)
+        return False
+    
+    def eliminar_secreto(self, nombre, secreto):
+        if self.vault:
+            return self.vault.eliminar_secreto(nombre, secreto)
+        return False
+    
+    def ver_secretos(self, nombre):
+        if self.vault:
+            secretos = self.vault.obtener_secretos(nombre)
+            if secretos:
+                if len(secretos) == 0:
+                    print("No hay secretos en el contenedor")
+                else:
+                    for secreto in secretos:
+                        print(secreto)
+                return
+            print("No hay secretos en el contenedor")
+        return None
+    
+
 
 
 
@@ -225,7 +293,73 @@ if __name__ == "__main__":
             print("Introduce tu contraseña:")
             password = input()
             if sb.login(username, password):
-                print("Has iniciado sesión correctamente!")
+                while True:
+                    print("\n¿Qué deseas hacer?")
+                    print("1. Crear contenedor")
+                    print("2. Eliminar contenedor")
+                    print("3. Ver contenedores")
+                    print("4. Añadir secreto a un contenedor")
+                    print("5. Eliminar secreto de un contenedor")
+                    print("6. Ver secretos de un contenedor")
+                    print("7. Cerrar sesión")
+                    print("Introduce el número de la opción deseada:")
+                    opcion = input()
+
+                    if opcion == "1":
+                        print("Introduce el nombre del contenedor:")
+                        nombre = input()
+                        if sb.crear_contenedor(nombre):
+                            print("Contenedor creado correctamente!")
+                        else:
+                            print("Error al crear el contenedor")
+                        
+
+                    if opcion == "2":
+                        print("Introduce el nombre del contenedor:")
+                        nombre = input()
+                        if sb.eliminar_contenedor(nombre):
+                            print("Contenedor eliminado correctamente!")
+                        else:
+                            print("Error al eliminar el contenedor")
+                        
+
+                    if opcion == "3":
+                        sb.ver_contenedor()
+                        
+
+                    if opcion == "4":
+                        print("Introduce el nombre del contenedor:")
+                        nombre = input()
+                        print("Introduce el secreto:")
+                        secreto = input()
+                        if sb.anadir_secreto(nombre, secreto):
+                            print("Secreto añadido correctamente!")
+                        else:
+                            print("Error al añadir el secreto")
+                        
+
+                    if opcion == "5":
+                        print("Introduce el nombre del contenedor:")
+                        nombre = input()
+                        print("Introduce el secreto:")
+                        secreto = input()
+                        if sb.eliminar_secreto(nombre, secreto):
+                            print("Secreto eliminado correctamente!")
+                        else:
+                            print("Error al eliminar el secreto")
+                        
+
+                    if opcion == "6":
+                        print("Introduce el nombre del contenedor:")
+                        nombre = input()
+                        sb.ver_secretos(nombre)
+                        
+
+                    if opcion == "7":
+                        print("Cerrando sesión...")
+                        break
+
+
             else:
                 print("Usuario o contraseña incorrectos")
             break
