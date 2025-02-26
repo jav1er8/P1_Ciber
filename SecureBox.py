@@ -9,6 +9,8 @@ import json
 import pdb
 from os import urandom
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import hmac, hashes
+
 
 class User:
     def __init__(self, username, password, salt=None): 
@@ -111,6 +113,7 @@ class Vault:
         )
         return kdf.derive(password)
     
+
     def anadir_contenedor(self, nombre):
         if nombre in self.contenedores:
             print("Contenedor ya existente")
@@ -171,9 +174,14 @@ class Vault:
         datos_json = json.dumps(datos_serializables)
         datos_cifrados, tag, iv = self.encriptar_datos(datos_json)
         
+        #Genero hmac para asegurar la integridad de los datos
+        h = hmac.HMAC(self.clave, hashes.SHA256(), backend=default_backend())
+        h.update(iv + tag + datos_cifrados)
+        hmac_creado = h.finalize()
+
         #Guardamos todo en el archivo
         with open(self.nombre_fichero, 'wb') as f:
-            f.write(iv + tag + datos_cifrados)
+            f.write(iv + tag + hmac_creado + datos_cifrados)
     
 
     def cargar_datos(self):
@@ -185,7 +193,18 @@ class Vault:
                 
                 iv = datos[:16]
                 tag = datos[16:32]
-                datos_cifrados = datos[32:]
+                hmac_creado = datos[32:64]
+                datos_cifrados = datos[64:]
+
+                hmac_obtenido = hmac.HMAC(self.clave, hashes.SHA256(), backend=default_backend())
+                hmac_obtenido.update(iv + tag + datos_cifrados)
+
+                try:
+                    hmac_obtenido.verify(hmac)
+                    print("Integridad de los datos verificada")
+                except:
+                    print("Error en la verificación de la integridad de los datos")
+                    return
                 
                 datos_json = self.desencriptar_datos(datos_cifrados, tag, iv).decode()
                 datos_deserializados = json.loads(datos_json)
@@ -448,3 +467,18 @@ if __name__ == "__main__":
 #Uso sqlite3 para almacenar los datos de los usuarios
 #Uso libreria cryptography para usar AES en modo GCM (lo dimos en cripto)
 #Añado @staticmethod a la función register, ya que no necesita de una instancia para ser llamada
+
+
+#Cosas a realizar/mejorar
+
+"""
+Integracion en la nube
+Comprobar autenticidad de la bbdd (¿hmac?) -> Hecho :)
+Cifrar por contenedor
+Interfaz gráfica
+
+
+Mejorar seguridad, por ejemplo, rotado claves
+Temporizador que cierra sesion
+
+"""
